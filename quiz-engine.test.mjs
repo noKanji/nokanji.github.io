@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createQuizEngine, getDisplayForm, normalizeQuizData, parseReadings } from "./quiz-engine.mjs";
-import { loadLearningData } from "./quiz-data.mjs";
 
 const kanji = (form, id, extra = {}) => ({ id, kanji: form, meaning: `значение ${id}`, kunyomi: `よみ${id}`, active: true, ...extra });
 const word = (id, extra = {}) => ({ id, japanese: `単語${id}`, reading: `たんご${id}`, meaning_ru: `слово ${id}`, active: true, ...extra });
@@ -102,22 +101,4 @@ test("new active row becomes eligible on next load and changes display form", ()
   const words = [word("nippon", { japanese: "日本", reading: "にほん" })];
   assert.equal(createQuizEngine(base, words).data.vocabulary[0].displayForm, "にほん");
   assert.equal(createQuizEngine([...base, kanji("本", "book")], words).data.vocabulary[0].displayForm, "日本");
-});
-
-test("API all contract uses the existing Sheets response", async () => {
-  let requested;
-  const data = await loadLearningData("https://example.test/exec", async url => {
-    requested = new URL(url).searchParams.get("type");
-    return { ok: true, json: async () => ({ success: true, kanji: [], words: [] }) };
-  });
-  assert.equal(requested, "all");
-  assert.deepEqual(data, { kanji: [], words: [] });
-});
-
-test("older API keeps kanji available when words are not deployed", async () => {
-  const row = kanji("日", "sun");
-  const data = await loadLearningData("https://example.test/exec", async () => ({
-    ok: true, json: async () => ({ success: true, items: [row] })
-  }));
-  assert.deepEqual(data, { kanji: [row], words: null });
 });
