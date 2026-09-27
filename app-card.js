@@ -12,7 +12,7 @@ import {
   getDailyNewIds
 } from "./storage.js?v=16";
 import { scheduleReview, isDue, isDifficult, buildReviewQueue, RESULTS } from "./scheduler.js?v=16";
-import { createQuizEngine } from "./quiz-engine.mjs?v=17";
+import { createQuizEngine } from "./quiz-engine.mjs?v=19";
 
 const state = {
   kanji: [],
@@ -34,6 +34,32 @@ const el = (tag, className, text) => {
 };
 const clean = value => value === null || value === undefined ? "" : String(value).trim();
 const has = value => clean(value) !== "";
+
+function kanaPronunciationKey(value) {
+  const text = clean(value).normalize("NFKC");
+  if (!text || !/^[\p{Script=Hiragana}\p{Script=Katakana}ー]+$/u.test(text)) return "";
+  return [...text].map(char => {
+    const code = char.codePointAt(0);
+    return code >= 0x30A1 && code <= 0x30F6 ? String.fromCodePoint(code - 0x60) : char;
+  }).join("");
+}
+
+function sameKanaPronunciation(left, right) {
+  const a = kanaPronunciationKey(left);
+  const b = kanaPronunciationKey(right);
+  return Boolean(a && b && a === b);
+}
+
+function quizSourceSummary(source) {
+  if (!source) return "";
+  const parts = [];
+  if (has(source.form)) parts.push(clean(source.form));
+  if (has(source.reading)
+    && clean(source.reading) !== clean(source.form)
+    && !sameKanaPronunciation(source.form, source.reading)) parts.push(clean(source.reading));
+  if (has(source.meaning)) parts.push(clean(source.meaning));
+  return parts.join(" · ");
+}
 
 function progressId(type, id) {
   return type === "word" ? `word:${id}` : String(id);
@@ -723,6 +749,104 @@ function startQuiz(mistakes = null) {
   routeTo("quiz");
 }
 
+function addQuizFact(parent, label, value) {
+  if (!has(value)) return;
+  const row = el("div", "quiz-fact");
+  row.append(el("span", "quiz-fact-label", label), el("strong", "quiz-fact-value", value));
+  parent.append(row);
+}
+
+function uniqueFeedbackExamples(feedback) {
+  const result = [];
+  const seen = new Set();
+  const add = entry => {
+    if (!entry || !has(entry.form)) return;
+    const id = `${clean(entry.form)}|${clean(entry.reading)}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    result.push(entry);
+  };
+  if (feedback?.focusWord) add(feedback.focusWord);
+  (feedback?.words || []).forEach(add);
+  return result.slice(0, 3);
+}
+
+function renderQuizFeedback(question, correct) {
+  const feedback = el("div", `quiz-feedback ${correct ? "correct" : "incorrect"}`);
+  feedback.append(el("strong", "quiz-feedback-status", correct ? "✅ Правильно" : "❌ Неправильно"));
+  feedback.append(el("p", "quiz-correct-answer", `Правильный ответ: ${question.answer}`));
+
+  const info = question.feedback;
+  if (!info) {
+    feedback.append(el("small", "", quizSourceSummary(question.source)));
+    return feedback;
+  }
+
+  if (info.kind === "kanji") {
+    const overview = el("div", "quiz-learning-block");
+    const title = el("div", "quiz-learning-title");
+    title.append(el("strong", "quiz-learning-form", info.kanji));
+    if (info.meaning) title.append(el("span", "quiz-learning-meaning", info.meaning));
+    overview.append(title);
+
+    const readings = el("div", "quiz-reading-grid");
+    addQuizFact(readings, "Онъёми", (info.onyomi || []).join("・") || "—");
+    addQuizFact(readings, "Кунъёми", (info.kunyomi || []).join("・") || "—");
+    overview.append(readings);
+
+    const examples = uniqueFeedbackExamples(info);
+    if (examples.length) {
+      overview.append(el("div", "quiz-learning-caption", "Примеры"));
+      const list = el("div", "quiz-feedback-examples");
+      examples.forEach(example => {
+        const row = el("div", "quiz-feedback-example");
+        const jp = example.reading && clean(example.reading) !== clean(example.form)
+          ? `${example.form}（${example.reading}）`
+          : example.form;
+        row.append(el("strong", "", jp));
+        if (example.meaning) row.append(el("span", "", example.meaning));
+        list.append(row);
+      });
+      overview.append(list);
+    }
+
+    const sentence = info.focusWord?.exampleJp
+      ? { form: info.focusWord.exampleJp, reading: info.focusWord.exampleReading, meaning: info.focusWord.exampleRu }
+      : (info.examples || [])[0];
+    if (sentence?.form) {
+      overview.append(el("div", "quiz-learning-caption", "В контексте"));
+      const sentenceNode = el("div", "quiz-feedback-sentence");
+      sentenceNode.append(el("strong", "", sentence.form));
+      if (sentence.reading && clean(sentence.reading) !== clean(sentence.form)) sentenceNode.append(el("span", "quiz-example-reading", sentence.reading));
+      if (sentence.meaning) sentenceNode.append(el("span", "quiz-example-meaning", sentence.meaning));
+      overview.append(sentenceNode);
+    }
+    feedback.append(overview);
+    return feedback;
+  }
+
+  const overview = el("div", "quiz-learning-block");
+  const title = el("div", "quiz-word-summary");
+  const showReading = info.reading
+    && clean(info.reading) !== clean(info.form)
+    && !sameKanaPronunciation(info.form, info.reading);
+  const form = showReading ? `${info.form}（${info.reading}）` : info.form;
+  title.append(el("strong", "quiz-word-form", form));
+  if (info.meaning) title.append(el("span", "quiz-learning-meaning", info.meaning));
+  overview.append(title);
+
+  if (info.exampleJp) {
+    overview.append(el("div", "quiz-learning-caption", "Пример"));
+    const sentence = el("div", "quiz-feedback-sentence");
+    sentence.append(el("strong", "", info.exampleJp));
+    if (info.exampleReading && clean(info.exampleReading) !== clean(info.exampleJp)) sentence.append(el("span", "quiz-example-reading", info.exampleReading));
+    if (info.exampleRu) sentence.append(el("span", "quiz-example-meaning", info.exampleRu));
+    overview.append(sentence);
+  }
+  feedback.append(overview);
+  return feedback;
+}
+
 function renderQuiz() {
   const content = $("quiz-content");
   content.replaceChildren();
@@ -766,10 +890,7 @@ function renderQuiz() {
   content.append(top, progress, card, answers);
   if (quiz.selected !== null) {
     const correct = quiz.selected === question.correctIndex;
-    const feedback = el("div", `quiz-feedback ${correct ? "correct" : "incorrect"}`);
-    feedback.append(el("strong", "", correct ? "✅ Правильно" : "❌ Неправильно"));
-    feedback.append(el("p", "", `Правильный ответ: ${question.answer}`));
-    feedback.append(el("small", "", [question.source.form, question.source.reading, question.source.meaning].filter(has).join(" · ")));
+    const feedback = renderQuizFeedback(question, correct);
     const next = el("button", "primary-button quiz-action", quiz.index === total - 1 ? "Посмотреть результат" : "Следующий вопрос");
     next.type = "button";
     next.addEventListener("click", () => { quiz.index += 1; quiz.selected = null; renderQuiz(); window.scrollTo(0, 0); });
@@ -799,7 +920,7 @@ function renderQuizResult() {
     box.append(el("h4", "", "Ошибки"));
     quiz.mistakes.forEach(mistake => {
       const row = el("div", "quiz-mistake");
-      row.append(el("strong", "", mistake.prompt), el("span", "", `Ваш ответ: ${mistake.selectedAnswer}`), el("span", "", `Правильно: ${mistake.answer}`), el("small", "", [mistake.source.form, mistake.source.reading, mistake.source.meaning].filter(has).join(" · ")));
+      row.append(el("strong", "", mistake.prompt), el("span", "", `Ваш ответ: ${mistake.selectedAnswer}`), el("span", "", `Правильно: ${mistake.answer}`), el("small", "", quizSourceSummary(mistake.source)));
       box.append(row);
     });
     const retry = el("button", "secondary-button quiz-action", "Повторить ошибки");

@@ -15,6 +15,14 @@ const shuffle = (items, random) => {
 const unique = values => [...new Map(values.filter(Boolean).map(value => [key(value), clean(value)])).values()];
 const meaningParts = value => unique(clean(value).split(/[;,、，；/]|\s+или\s+/iu));
 
+function parseGroupedEntries(value) {
+  if (!clean(value)) return [];
+  return String(value).split(";").map(entry => entry.trim()).filter(Boolean).map(entry => {
+    const [form = "", reading = "", ...meaningParts] = entry.split("|").map(part => part.trim());
+    return { form: clean(form), reading: clean(reading), meaning: clean(meaningParts.join("|")) };
+  }).filter(entry => entry.form);
+}
+
 export function parseReadings(value) {
   return unique(String(value ?? "").normalize("NFKC").split(/[、，,;；/・\n\r]+/u).map(clean));
 }
@@ -60,6 +68,8 @@ export function normalizeQuizData(kanjiRows = [], vocabularyRows = []) {
       meaning: clean(row.meaning), meaningExtra: clean(row.meaning_extra),
       meanings: unique([...meaningParts(row.meaning), ...meaningParts(row.meaning_extra)]),
       onyomi, kunyomi, readings: unique([...kunyomi, ...onyomi]),
+      words: parseGroupedEntries(row.words),
+      examples: parseGroupedEntries(row.examples),
       lesson: clean(row.lesson)
     };
   }).filter(row => row.id && row.form);
@@ -69,7 +79,10 @@ export function normalizeQuizData(kanjiRows = [], vocabularyRows = []) {
     kind: "vocabulary", id: clean(row.id || `${row.japanese}|${row.reading}`),
     japanese: clean(row.japanese), reading: clean(row.reading),
     meaning: clean(row.meaning_ru), meanings: meaningParts(row.meaning_ru),
-    displayForm: getDisplayForm(row, known), lesson: clean(row.lesson)
+    displayForm: getDisplayForm(row, known), lesson: clean(row.lesson),
+    exampleJp: clean(row.example_jp),
+    exampleReading: clean(row.example_reading),
+    exampleRu: clean(row.example_ru)
   })).filter(row => row.id && row.displayForm);
 
   const kanji = kanjiBase.map(item => ({
@@ -161,6 +174,44 @@ function validateQuestion(question, choices) {
   return true;
 }
 
+function feedbackFor(candidate, data) {
+  const item = candidate.item;
+  if (item.kind === "kanji") {
+    const focusWord = candidate.variant?.vocabularyId
+      ? data.vocabulary.find(word => word.id === candidate.variant.vocabularyId)
+      : null;
+    return {
+      kind: "kanji",
+      kanji: item.form,
+      meaning: item.meaning,
+      meaningExtra: item.meaningExtra,
+      onyomi: [...item.onyomi],
+      kunyomi: [...item.kunyomi],
+      focusWord: focusWord ? {
+        form: focusWord.displayForm,
+        reading: focusWord.reading,
+        meaning: focusWord.meaning,
+        exampleJp: focusWord.exampleJp,
+        exampleReading: focusWord.exampleReading,
+        exampleRu: focusWord.exampleRu
+      } : null,
+      words: item.words.slice(0, 3),
+      examples: item.examples.slice(0, 1)
+    };
+  }
+
+  return {
+    kind: "vocabulary",
+    form: item.displayForm,
+    japanese: item.japanese,
+    reading: item.reading,
+    meaning: item.meaning,
+    exampleJp: item.exampleJp,
+    exampleReading: item.exampleReading,
+    exampleRu: item.exampleRu
+  };
+}
+
 export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random) {
   const data = normalizeQuizData(kanjiRows, vocabularyRows);
   const candidates = buildCandidates(data);
@@ -220,7 +271,8 @@ export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random
       choices,
       correctIndex,
       answer: question.answer,
-      source: { form: sourceForm, reading: sourceReading, meaning: candidate.item.meaning }
+      source: { form: sourceForm, reading: sourceReading, meaning: candidate.item.meaning },
+      feedback: feedbackFor(candidate, data)
     };
   }
 

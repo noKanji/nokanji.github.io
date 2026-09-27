@@ -140,3 +140,66 @@ test("kunyomi without a matching active vocabulary form is not asked on bare kan
   const data = normalizeQuizData(rows, []);
   assert.deepEqual(data.kanji[0].readingVariants, [{ mode: "onyomi", form: "五", reading: "ゴ" }]);
 });
+
+test("quiz feedback includes both kanji readings and source-table examples", () => {
+  const forms = ["町", "山", "川", "口", "手", "目"];
+  const rows = forms.map((form, i) => ({
+    id: form,
+    kanji: form,
+    meaning: `значение ${i}`,
+    onyomi: `オン${i}`,
+    kunyomi: `よみ${i}`,
+    words: `${form}|よみ${i}|пример ${i}`,
+    examples: `${form}です。|よみ${i}です。|Предложение ${i}`,
+    active: true
+  }));
+  rows[0] = {
+    ...rows[0],
+    meaning: "городок",
+    onyomi: "チョウ",
+    kunyomi: "まち",
+    words: "町|まち|город;町中|まちなか|центр города",
+    examples: "この町に病院があります。|この まちに びょういんが あります。|В этом городе есть больница."
+  };
+  const words = forms.map((form, i) => ({
+    id: `w${i}`,
+    japanese: form,
+    reading: i === 0 ? "まち" : `よみ${i}`,
+    meaning_ru: i === 0 ? "город; посёлок" : `слово ${i}`,
+    example_jp: i === 0 ? "町に住んでいます。" : `${form}です。`,
+    example_reading: i === 0 ? "まちにすんでいます。" : `よみ${i}です。`,
+    example_ru: i === 0 ? "Я живу в городе." : `Пример ${i}`,
+    active: true
+  }));
+
+  const quiz = createQuizEngine(rows, words, () => 0.29).generateQuiz(100);
+  const q = quiz.find(item => item.sourceId === "町" && item.type === "kanji_kunyomi_reading");
+  assert.ok(q);
+  assert.deepEqual(q.feedback.onyomi, ["チョウ"]);
+  assert.deepEqual(q.feedback.kunyomi, ["まち"]);
+  assert.equal(q.feedback.focusWord.form, "町");
+  assert.equal(q.feedback.focusWord.reading, "まち");
+  assert.equal(q.feedback.focusWord.exampleJp, "町に住んでいます。");
+  assert.equal(q.feedback.words[0].form, "町");
+  assert.equal(q.feedback.examples[0].meaning, "В этом городе есть больница.");
+});
+
+test("vocabulary feedback includes reading, meaning, and sentence", () => {
+  const words = Array.from({ length: 6 }, (_, i) => ({
+    id: `v${i}`,
+    japanese: `病院${i}`,
+    reading: `びょういん${i}`,
+    meaning_ru: `больница ${i}`,
+    example_jp: `病院${i}に行きます。`,
+    example_reading: `びょういん${i}にいきます。`,
+    example_ru: `Я иду в больницу ${i}.`,
+    active: true
+  }));
+  const quiz = createQuizEngine([], words, () => 0.41).generateQuiz(30);
+  const q = quiz.find(item => item.kind === "vocabulary");
+  assert.ok(q);
+  assert.equal(q.feedback.kind, "vocabulary");
+  assert.ok(q.feedback.reading.startsWith("びょういん"));
+  assert.ok(q.feedback.meaning.startsWith("больница"));
+  assert.ok(q.feedback.exampleJp.includes("行きます"));
+});

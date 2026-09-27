@@ -1,11 +1,11 @@
-/* Kanji + Words GitHub Pages release v17 */
-importScripts("./config-live.js?v=17");
+/* Kanji + Words GitHub Pages release v19 */
+importScripts("./config-live.js?v=19");
 
 const SHELL_CACHE = `${CONFIG.CACHE_VERSION}-shell`;
 const IMAGE_CACHE = `${CONFIG.CACHE_VERSION}-images`;
 const SHELL = [
-  "./", "./index.html", "./manifest.json", "./styles.css?v=16",
-  "./config-live.js?v=17", "./app-card.js?v=17", "./storage.js?v=16", "./scheduler.js?v=16", "./quiz-engine.mjs?v=17",
+  "./", "./index.html", "./manifest.json", "./styles.css?v=19",
+  "./config-live.js?v=19", "./app-card.js?v=19", "./storage.js?v=16", "./scheduler.js?v=16", "./quiz-engine.mjs?v=19",
   "./icons/icon-48.png", "./icons/icon-72.png", "./icons/icon-96.png", "./icons/icon-128.png",
   "./icons/icon-144.png", "./icons/icon-152.png", "./icons/icon-180.png", "./icons/icon-192.png",
   "./icons/icon-384.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png"
