@@ -9,7 +9,7 @@ import {
   readCachedLearningData,
   readSettings,
   saveSettings
-} from "./storage.js";
+} from "./storage.js?v=15";
 import {
   scheduleReview,
   isDue,
@@ -17,10 +17,10 @@ import {
   isMastered,
   buildReviewQueue,
   RESULTS
-} from "./scheduler.js";
-import { normalizeCardData } from "./data.js";
-import { createQuizEngine } from "./quiz-engine.mjs";
-import { loadLearningData } from "./quiz-data.mjs";
+} from "./scheduler.js?v=15";
+import { normalizeCardData } from "./data.js?v=15";
+import { createQuizEngine } from "./quiz-engine.mjs?v=15";
+import { loadLearningData } from "./quiz-data.mjs?v=15";
 
 const state = {
   cards: [],
@@ -92,11 +92,11 @@ async function loadCards() {
     if (!configured) throw new Error("Укажите URL Google Apps Script в config-live.js.");
     const data = await loadLearningData(CONFIG.API_URL);
     state.cards = normalizeItems(data.kanji);
-    state.quizEngine = createQuizEngine(data.kanji, data.words);
-    state.quizError = "";
+    state.quizEngine = data.words ? createQuizEngine(data.kanji, data.words) : null;
+    state.quizError = data.words ? "" : "Опубликованный API пока не отдаёт лист «Слова». Обновите развертывание Apps Script.";
     state.usingCache = false;
     cacheLearningData(data);
-    setBanner("");
+    setBanner(data.words ? "" : "Лист «Слова» пока недоступен. Библиотека кандзи работает, квиз появится после обновления Apps Script.");
   } catch (error) {
     const cached = readCachedLearningData();
     if (cached) {
@@ -1274,7 +1274,7 @@ window.addEventListener("offline", () => {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js")
+    navigator.serviceWorker.register("./service-worker.js?v=15")
       .catch(error => console.warn("Service Worker не зарегистрирован", error));
   });
 }

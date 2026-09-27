@@ -1,4 +1,4 @@
-import { defaultProgress } from "./scheduler.js";
+import { defaultProgress } from "./scheduler.js?v=15";
 
 const PROGRESS_KEY = "kanji-trainer-progress-v1";
 const DATA_CACHE_KEY = "kanji-trainer-data-cache-v1";
@@ -121,5 +121,5 @@ export function cacheLearningData(items) {
 export function readCachedLearningData() {
   const cached = safeParse(localStorage.getItem(DATA_CACHE_KEY), null);
   return cached?.items && (Array.isArray(cached.items) ||
-    (Array.isArray(cached.items.kanji) && Array.isArray(cached.items.words))) ? cached : null;
+    (Array.isArray(cached.items.kanji) && (cached.items.words === null || Array.isArray(cached.items.words)))) ? cached : null;
 }

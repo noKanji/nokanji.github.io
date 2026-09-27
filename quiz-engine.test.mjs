@@ -113,3 +113,11 @@ test("API all contract uses the existing Sheets response", async () => {
   assert.equal(requested, "all");
   assert.deepEqual(data, { kanji: [], words: [] });
 });
+
+test("older API keeps kanji available when words are not deployed", async () => {
+  const row = kanji("日", "sun");
+  const data = await loadLearningData("https://example.test/exec", async () => ({
+    ok: true, json: async () => ({ success: true, items: [row] })
+  }));
+  assert.deepEqual(data, { kanji: [row], words: null });
+});

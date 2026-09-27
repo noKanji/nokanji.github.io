@@ -1,3 +1,4 @@
+// Shared card schema for the Google Sheets response.
 export const DATA_FIELDS = Object.freeze([
   "id", "kanji", "meaning", "meaning_extra", "onyomi", "kunyomi",
   "components", "stroke_count", "words", "examples", "lesson", "jlpt",
