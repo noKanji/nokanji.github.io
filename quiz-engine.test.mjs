@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createQuizEngine, getDisplayForm, normalizeQuizData, parseReadings } from "./quiz-engine.mjs";
 
-const kanji = (form, id, extra = {}) => ({ id, kanji: form, meaning: `значение ${id}`, kunyomi: `よみ${id}`, active: true, ...extra });
+const kanji = (form, id, extra = {}) => ({ id, kanji: form, meaning: `значение ${id}`, onyomi: `オン${id}`, kunyomi: `よみ${id}`, active: true, ...extra });
 const word = (id, extra = {}) => ({ id, japanese: `単語${id}`, reading: `たんご${id}`, meaning_ru: `слово ${id}`, active: true, ...extra });
 const activeKanji = chars => new Set([...chars]);
 
@@ -101,4 +101,42 @@ test("new active row becomes eligible on next load and changes display form", ()
   const words = [word("nippon", { japanese: "日本", reading: "にほん" })];
   assert.equal(createQuizEngine(base, words).data.vocabulary[0].displayForm, "にほん");
   assert.equal(createQuizEngine([...base, kanji("本", "book")], words).data.vocabulary[0].displayForm, "日本");
+});
+
+
+test("lexical kunyomi uses the real word form with okurigana", () => {
+  const rows = [
+    { id: "一", kanji: "一", meaning: "один", onyomi: "イチ", kunyomi: "ひとつ", active: true },
+    { id: "二", kanji: "二", meaning: "два", onyomi: "ニ", kunyomi: "ふたつ", active: true },
+    { id: "三", kanji: "三", meaning: "три", onyomi: "サン", kunyomi: "みっつ", active: true },
+    { id: "四", kanji: "四", meaning: "четыре", onyomi: "シ", kunyomi: "よっつ", active: true },
+    { id: "五", kanji: "五", meaning: "пять", onyomi: "ゴ", kunyomi: "いつつ", active: true },
+    { id: "六", kanji: "六", meaning: "шесть", onyomi: "ロク", kunyomi: "むっつ", active: true }
+  ];
+  const words = [
+    { id: "w1", japanese: "一つ", reading: "ひとつ", meaning_ru: "одна штука", active: true },
+    { id: "w2", japanese: "二つ", reading: "ふたつ", meaning_ru: "две штуки", active: true },
+    { id: "w3", japanese: "三つ", reading: "みっつ", meaning_ru: "три штуки", active: true },
+    { id: "w4", japanese: "四つ", reading: "よっつ", meaning_ru: "четыре штуки", active: true },
+    { id: "w5", japanese: "五つ", reading: "いつつ", meaning_ru: "пять штук", active: true },
+    { id: "w6", japanese: "六つ", reading: "むっつ", meaning_ru: "шесть штук", active: true }
+  ];
+
+  const engine = createQuizEngine(rows, words, () => 0.31);
+  const five = engine.data.kanji.find(row => row.id === "五");
+  assert.ok(five.readingVariants.some(v => v.mode === "kunyomi" && v.form === "五つ" && v.reading === "いつつ"));
+  assert.ok(!five.readingVariants.some(v => v.mode === "kunyomi" && v.form === "五" && v.reading === "いつつ"));
+
+  const quiz = engine.generateQuiz(100);
+  assert.ok(quiz.some(q => q.sourceId === "五" && q.type === "kanji_kunyomi_reading" && q.prompt === "五つ" && q.answer === "いつつ"));
+  assert.ok(quiz.some(q => q.sourceId === "五" && q.type === "kanji_onyomi_reading" && q.prompt === "五" && q.answer === "ゴ" && q.label === "Онъёми"));
+  assert.ok(!quiz.some(q => q.prompt === "五" && q.answer === "いつつ"));
+});
+
+test("kunyomi without a matching active vocabulary form is not asked on bare kanji", () => {
+  const rows = [
+    { id: "五", kanji: "五", meaning: "пять", onyomi: "ゴ", kunyomi: "いつつ", active: true }
+  ];
+  const data = normalizeQuizData(rows, []);
+  assert.deepEqual(data.kanji[0].readingVariants, [{ mode: "onyomi", form: "五", reading: "ゴ" }]);
 });

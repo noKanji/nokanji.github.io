@@ -12,7 +12,7 @@ import {
   getDailyNewIds
 } from "./storage.js?v=16";
 import { scheduleReview, isDue, isDifficult, buildReviewQueue, RESULTS } from "./scheduler.js?v=16";
-import { createQuizEngine } from "./quiz-engine.mjs?v=16";
+import { createQuizEngine } from "./quiz-engine.mjs?v=17";
 
 const state = {
   kanji: [],
@@ -746,9 +746,9 @@ function renderQuiz() {
   fill.style.width = `${(quiz.index / total) * 100}%`;
   progress.append(fill);
   const card = el("div", "quiz-question");
-  const promptLabel = question.type.endsWith("_from_meaning") || question.type.endsWith("_from_reading")
+  const promptLabel = question.label || (question.type.endsWith("_from_meaning") || question.type.endsWith("_from_reading")
     ? `Выберите ${question.kind === "kanji" ? "кандзи" : "слово"}`
-    : question.type.endsWith("_meaning") ? "Что означает?" : "Как читается?";
+    : question.type.endsWith("_meaning") ? "Что означает?" : "Как читается?");
   card.append(el("p", "eyebrow", promptLabel), el("strong", "quiz-prompt", question.prompt));
   const answers = el("div", "quiz-answers");
   question.choices.forEach((choice, index) => {
@@ -987,7 +987,7 @@ document.addEventListener("keydown", event => {
 
 window.addEventListener("online", () => setBanner(state.usingCache ? "Соединение восстановлено. Нажмите «Обновить», чтобы получить свежие данные." : ""));
 window.addEventListener("offline", () => setBanner("Нет сети. Доступна сохранённая версия приложения и ранее загруженные данные."));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=16").catch(error => console.warn("Service Worker не зарегистрирован", error)));
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=17").catch(error => console.warn("Service Worker не зарегистрирован", error)));
 
 updateDeckSwitch();
 loadCards();
