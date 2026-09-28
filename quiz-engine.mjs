@@ -14,6 +14,10 @@ const shuffle = (items, random) => {
 
 const unique = values => [...new Map(values.filter(Boolean).map(value => [key(value), clean(value)])).values()];
 const meaningParts = value => unique(clean(value).split(/[;,、，；/]|\s+или\s+/iu));
+const kanaKey = value => [...clean(value)].map(char => {
+  const code = char.codePointAt(0);
+  return code >= 0x30A1 && code <= 0x30F6 ? String.fromCodePoint(code - 0x60) : char;
+}).join("").toLocaleLowerCase("ru");
 
 function parseGroupedEntries(value) {
   if (!clean(value)) return [];
@@ -99,6 +103,12 @@ function overlaps(a, b) {
 
 function definitions(item) {
   return item.meanings || [];
+}
+
+function coverageKey(item) {
+  return item.kind === "kanji"
+    ? `kanji:${key(item.form)}`
+    : `vocabulary:${key(item.displayForm)}|${kanaKey(item.reading)}`;
 }
 
 function candidateKey(candidate) {
@@ -263,6 +273,7 @@ export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random
 
     return {
       candidateId: candidateKey(candidate),
+      coverageId: coverageKey(candidate.item),
       sourceId: candidate.item.id,
       kind: candidate.item.kind,
       type: candidate.type,
@@ -276,7 +287,7 @@ export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random
     };
   }
 
-  function generateQuiz(count = 30, onlyMistakes = null) {
+  function generateQuiz(count = 30, onlyMistakes = null, quizHistory = null) {
     const available = onlyMistakes
       ? candidates.filter(candidate => onlyMistakes.some(mistake =>
         mistake.candidateId === candidateKey(candidate) ||
@@ -288,12 +299,28 @@ export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random
     const typeUses = new Map();
     const kindUses = new Map();
     const positions = shuffle(Array.from({ length: count }, (_, index) => index % 4), random);
+    const historySources = quizHistory?.sources && typeof quizHistory.sources === "object" ? quizHistory.sources : {};
+    const historyCandidates = quizHistory?.candidates && typeof quizHistory.candidates === "object" ? quizHistory.candidates : {};
 
     while (chosen.length < count) {
       const options = shuffle(available.filter(candidate => !used.has(candidateKey(candidate))), random)
         .sort((a, b) => {
-          const score = candidate => (sourceUses.get(`${candidate.item.kind}:${candidate.item.id}`) || 0) * 100
-            + (kindUses.get(candidate.item.kind) || 0) * 10 + (typeUses.get(candidate.type) || 0);
+          const score = candidate => {
+            const coverageId = coverageKey(candidate.item);
+            const sourceStats = historySources[coverageId] || {};
+            const candidateStats = historyCandidates[candidateKey(candidate)] || {};
+            const sourceSeen = Math.max(0, Number(sourceStats.seen) || 0);
+            const candidateSeen = Math.max(0, Number(candidateStats.seen) || 0);
+            const usedThisQuiz = sourceUses.get(coverageId) || 0;
+            // Primary goal: cover every unique kanji/word before repeating it.
+            // Once coverage is complete, least-seen sources and question directions rise first.
+            return usedThisQuiz * 100000000
+              + (sourceSeen > 0 ? 1000000 : 0)
+              + sourceSeen * 10000
+              + candidateSeen * 500
+              + (kindUses.get(candidate.item.kind) || 0) * 10
+              + (typeUses.get(candidate.type) || 0);
+          };
           return score(a) - score(b);
         });
       let next = null;
@@ -304,8 +331,7 @@ export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random
       }
       if (!next) break;
       chosen.push(next);
-      const sourceKey = `${next.kind}:${next.sourceId}`;
-      sourceUses.set(sourceKey, (sourceUses.get(sourceKey) || 0) + 1);
+      sourceUses.set(next.coverageId, (sourceUses.get(next.coverageId) || 0) + 1);
       typeUses.set(next.type, (typeUses.get(next.type) || 0) + 1);
       kindUses.set(next.kind, (kindUses.get(next.kind) || 0) + 1);
     }
@@ -328,5 +354,18 @@ export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random
     return shuffle(questions, random);
   }
 
-  return { data, generateQuiz, generateMistakeQuiz };
+  const catalog = [...new Map(candidates.map(candidate => {
+    const item = candidate.item;
+    const coverageId = coverageKey(item);
+    return [coverageId, {
+      coverageId,
+      kind: item.kind,
+      form: item.kind === "kanji" ? item.form : item.displayForm,
+      reading: item.kind === "kanji" ? item.readings.join(" / ") : item.reading,
+      meaning: item.meaning,
+      lesson: item.lesson
+    }];
+  })).values()];
+
+  return { data, catalog, generateQuiz, generateMistakeQuiz };
 }

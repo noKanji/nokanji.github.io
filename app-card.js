@@ -9,10 +9,12 @@ import {
   readCachedLearningData,
   readSettings,
   saveSettings,
-  getDailyNewIds
-} from "./storage.js?v=16";
-import { scheduleReview, isDue, isDifficult, buildReviewQueue, RESULTS } from "./scheduler.js?v=16";
-import { createQuizEngine } from "./quiz-engine.mjs?v=19";
+  getDailyNewIds,
+  readQuizProgress,
+  recordQuizAnswer
+} from "./storage.js?v=20";
+import { scheduleReview, isDue, isDifficult, buildReviewQueue, RESULTS } from "./scheduler.js?v=20";
+import { createQuizEngine } from "./quiz-engine.mjs?v=20";
 
 const state = {
   kanji: [],
@@ -252,7 +254,7 @@ function routeTo(route, scroll = true) {
   else if (route === "library") { showView("library"); renderLibrary(); }
   else if (route === "quiz") { showView("quiz"); renderQuiz(); }
   else if (route === "progress") { showView("progress"); renderProgress(); }
-  else if (route === "hard") { showView("hard"); renderHard(); }
+  else if (route === "quiz-progress") { showView("quiz-progress"); renderQuizProgress(); }
   else if (route === "session") showView("session");
   if (scroll) window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
@@ -743,7 +745,7 @@ function renderCompletion() {
 
 function startQuiz(mistakes = null) {
   const questions = state.quizEngine
-    ? mistakes ? state.quizEngine.generateMistakeQuiz(mistakes) : state.quizEngine.generateQuiz(30)
+    ? mistakes ? state.quizEngine.generateMistakeQuiz(mistakes) : state.quizEngine.generateQuiz(30, null, readQuizProgress())
     : [];
   state.quiz = questions.length ? { questions, index: 0, correct: 0, selected: null, mistakes: [] } : null;
   routeTo("quiz");
@@ -903,7 +905,9 @@ function answerQuiz(index) {
   if (!quiz || quiz.selected !== null) return;
   const question = quiz.questions[quiz.index];
   quiz.selected = index;
-  if (index === question.correctIndex) quiz.correct += 1;
+  const correct = index === question.correctIndex;
+  recordQuizAnswer(question, correct);
+  if (correct) quiz.correct += 1;
   else quiz.mistakes.push({ ...question, selectedAnswer: question.choices[index] });
   renderQuiz();
 }
@@ -964,13 +968,96 @@ function renderProgress() {
   }));
 }
 
-function renderHard() {
-  const cards = currentCards().filter(card => isDifficult(card.progress));
-  const grid = $("hard-grid");
-  grid.classList.toggle("word-grid", state.deck === "words");
-  grid.replaceChildren(...cards.map(createMiniCard));
-  $("hard-empty").hidden = cards.length > 0;
-  $("practice-hard").disabled = !cards.length;
+function quizMastered(stats) {
+  const correct = Number(stats?.correct || 0);
+  const mistakes = Number(stats?.mistakes || 0);
+  return correct >= 2 && correct >= mistakes * 2;
+}
+
+function renderQuizProgress() {
+  const catalog = state.quizEngine?.catalog || [];
+  const history = readQuizProgress();
+  const rows = catalog.map(item => {
+    const stats = history.sources[item.coverageId] || {};
+    return { ...item, seen: Number(stats.seen || 0), correct: Number(stats.correct || 0), mistakes: Number(stats.mistakes || 0) };
+  });
+  const total = rows.length;
+  const seen = rows.filter(row => row.seen > 0);
+  const unseen = rows.filter(row => row.seen === 0);
+  const mastered = rows.filter(row => quizMastered(row));
+  const inProgress = seen.filter(row => !quizMastered(row));
+  const withMistakes = rows.filter(row => row.mistakes > 0);
+  const percent = total ? Math.round(seen.length / total * 100) : 0;
+
+  const hero = $("quiz-coverage-hero");
+  hero.replaceChildren();
+  const heroTop = el("div", "quiz-coverage-head");
+  const main = el("div", "quiz-coverage-main");
+  main.append(el("strong", "", `${seen.length} / ${total}`), el("span", "", "уже встречались в квизе"));
+  heroTop.append(main, el("strong", "quiz-coverage-percent", `${percent}%`));
+  const track = el("div", "progress-track large quiz-coverage-track");
+  const fill = el("span", "progress-fill");
+  fill.style.width = `${percent}%`;
+  track.append(fill);
+  hero.append(heroTop, track, el("p", "quiz-coverage-note", "Новые карточки теперь идут раньше повторов, чтобы постепенно охватить всю базу."));
+
+  const values = [
+    [mastered.length, "Освоено"],
+    [inProgress.length, "В процессе"],
+    [unseen.length, "Ещё не было"],
+    [withMistakes.length, "С ошибками"]
+  ];
+  $("quiz-progress-summary").replaceChildren(...values.map(([value, label]) => {
+    const node = el("div", "stat");
+    node.append(el("strong", "", String(value)), el("span", "", label));
+    return node;
+  }));
+
+  const kindBox = $("quiz-progress-kinds");
+  kindBox.replaceChildren();
+  [["kanji", "Кандзи"], ["vocabulary", "Слова"]].forEach(([kind, label]) => {
+    const items = rows.filter(row => row.kind === kind);
+    const kindSeen = items.filter(row => row.seen > 0).length;
+    const card = el("div", "quiz-kind-card");
+    const head = el("div", "quiz-kind-head");
+    head.append(el("strong", "", label), el("span", "", `${kindSeen} / ${items.length}`));
+    const line = el("div", "progress-track");
+    const lineFill = el("span", "progress-fill");
+    lineFill.style.width = `${items.length ? Math.round(kindSeen / items.length * 100) : 0}%`;
+    line.append(lineFill);
+    card.append(head, line);
+    kindBox.append(card);
+  });
+
+  const unseenBox = $("quiz-unseen-list");
+  unseenBox.replaceChildren();
+  const unseenPreview = unseen.slice(0, 24);
+  if (!unseenPreview.length) {
+    unseenBox.append(el("div", "quiz-progress-empty", "Вся текущая база уже хотя бы раз встретилась 🎉"));
+  } else {
+    unseenPreview.forEach(item => {
+      const chip = el("span", "quiz-source-chip");
+      chip.append(el("strong", "", item.form), el("small", "", item.meaning || (item.kind === "kanji" ? "кандзи" : "слово")));
+      unseenBox.append(chip);
+    });
+    if (unseen.length > unseenPreview.length) unseenBox.append(el("span", "quiz-source-more", `+ ещё ${unseen.length - unseenPreview.length}`));
+  }
+
+  const weakBox = $("quiz-weak-list");
+  weakBox.replaceChildren();
+  const weak = withMistakes.sort((a, b) => b.mistakes - a.mistakes || a.correct - b.correct).slice(0, 12);
+  if (!weak.length) weakBox.append(el("div", "quiz-progress-empty", "Пока нет накопленных ошибок."));
+  else weak.forEach(item => {
+    const row = el("div", "quiz-weak-row");
+    const text = el("div", "");
+    text.append(el("strong", "", item.form), el("small", "", item.meaning || ""));
+    row.append(text, el("span", "", `${item.correct} ✓ · ${item.mistakes} ✕`));
+    weakBox.append(row);
+  });
+
+  const start = $("quiz-progress-start");
+  start.disabled = !total;
+  start.textContent = unseen.length ? `Продолжить охват · ${Math.min(30, total)} вопросов` : "Новый квиз · повторение";
 }
 
 function createAudioButton(text, label, className = "audio-button") {
@@ -1058,7 +1145,7 @@ $("quiz-exit").addEventListener("click", () => { state.quiz = null; routeTo("tod
 $("refresh-button").addEventListener("click", () => loadCards(true));
 $("start-today").addEventListener("click", startTodaySession);
 $("session-exit").addEventListener("click", () => { state.session = null; routeTo("today"); });
-$("practice-hard").addEventListener("click", () => startSession("hard", currentCards().filter(card => isDifficult(card.progress))));
+$("quiz-progress-start").addEventListener("click", () => startQuiz());
 $("dialog-close").addEventListener("click", () => closeDialog($("card-dialog")));
 $("settings-button").addEventListener("click", () => { syncSettingsDialog(); openDialog($("settings-dialog")); });
 $("settings-close").addEventListener("click", () => closeDialog($("settings-dialog")));
@@ -1079,7 +1166,7 @@ $("import-input").addEventListener("change", async event => {
   event.target.value = "";
 });
 $("clear-button").addEventListener("click", () => {
-  if (!confirm("Удалить весь локальный прогресс кандзи и слов? Это действие нельзя отменить.")) return;
+  if (!confirm("Удалить весь локальный прогресс кандзи, слов и квизов? Это действие нельзя отменить.")) return;
   clearProgress();
   refreshProgressObjects();
   routeTo("today", false);

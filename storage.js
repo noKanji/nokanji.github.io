@@ -1,9 +1,10 @@
-import { defaultProgress } from "./scheduler.js?v=16";
+import { defaultProgress } from "./scheduler.js?v=20";
 
 const PROGRESS_KEY = "kanji-trainer-progress-v1";
 const DATA_CACHE_KEY = "kanji-words-data-cache-v2";
 const SETTINGS_KEY = "kanji-words-settings-v1";
 const DAILY_KEY_PREFIX = "kanji-words-daily-v1";
+const QUIZ_PROGRESS_KEY = "kanji-words-quiz-progress-v1";
 
 function safeParse(raw, fallback) {
   if (!raw) return fallback;
@@ -37,16 +38,45 @@ export function toggleFavorite(id) {
   return saveProgress(progress);
 }
 
+export function readQuizProgress() {
+  const saved = safeParse(localStorage.getItem(QUIZ_PROGRESS_KEY), null);
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) return { version: 1, sources: {}, candidates: {} };
+  return {
+    version: 1,
+    sources: saved.sources && typeof saved.sources === "object" && !Array.isArray(saved.sources) ? saved.sources : {},
+    candidates: saved.candidates && typeof saved.candidates === "object" && !Array.isArray(saved.candidates) ? saved.candidates : {}
+  };
+}
+
+export function recordQuizAnswer(question, correct, now = new Date()) {
+  if (!question?.kind || !question?.sourceId) return readQuizProgress();
+  const all = readQuizProgress();
+  const coverageId = String(question.coverageId || `${question.kind}:${question.sourceId}`);
+  const candidateId = String(question.candidateId || `${coverageId}:${question.type || "question"}`);
+  const update = current => ({
+    seen: Number(current?.seen || 0) + 1,
+    correct: Number(current?.correct || 0) + (correct ? 1 : 0),
+    mistakes: Number(current?.mistakes || 0) + (correct ? 0 : 1),
+    lastSeenAt: now.toISOString()
+  });
+  all.sources[coverageId] = update(all.sources[coverageId]);
+  all.candidates[candidateId] = update(all.candidates[candidateId]);
+  localStorage.setItem(QUIZ_PROGRESS_KEY, JSON.stringify(all));
+  return all;
+}
+
 export function clearProgress() {
   localStorage.removeItem(PROGRESS_KEY);
+  localStorage.removeItem(QUIZ_PROGRESS_KEY);
   Object.keys(localStorage).filter(key => key.startsWith(DAILY_KEY_PREFIX)).forEach(key => localStorage.removeItem(key));
 }
 
 export function exportProgress() {
   const blob = new Blob([JSON.stringify({
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     progress: readAllProgress(),
+    quizProgress: readQuizProgress(),
     settings: readSettings()
   }, null, 2)], { type: "application/json" });
   const link = document.createElement("a");
@@ -69,6 +99,13 @@ export async function importProgress(file) {
     clean[id] = { ...defaultProgress(id), ...value, id: String(id) };
   });
   localStorage.setItem(PROGRESS_KEY, JSON.stringify(clean));
+  if (parsed?.quizProgress && typeof parsed.quizProgress === "object" && !Array.isArray(parsed.quizProgress)) {
+    localStorage.setItem(QUIZ_PROGRESS_KEY, JSON.stringify({
+      version: 1,
+      sources: parsed.quizProgress.sources && typeof parsed.quizProgress.sources === "object" ? parsed.quizProgress.sources : {},
+      candidates: parsed.quizProgress.candidates && typeof parsed.quizProgress.candidates === "object" ? parsed.quizProgress.candidates : {}
+    }));
+  }
   if (parsed?.settings && typeof parsed.settings === "object") saveSettings(parsed.settings);
   return clean;
 }

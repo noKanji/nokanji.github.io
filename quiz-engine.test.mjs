@@ -203,3 +203,37 @@ test("vocabulary feedback includes reading, meaning, and sentence", () => {
   assert.ok(q.feedback.meaning.startsWith("больница"));
   assert.ok(q.feedback.exampleJp.includes("行きます"));
 });
+
+
+test("coverage catalog collapses duplicate vocabulary rows with the same visible word and reading", () => {
+  const words = [
+    { id: "m1", japanese: "ママ", reading: "ママ", meaning_ru: "мама", active: true },
+    { id: "m2", japanese: "ママ", reading: "まま", meaning_ru: "мама", active: true },
+    { id: "w2", japanese: "病院", reading: "びょういん", meaning_ru: "больница", active: true },
+    { id: "w3", japanese: "学校", reading: "がっこう", meaning_ru: "школа", active: true },
+    { id: "w4", japanese: "先生", reading: "せんせい", meaning_ru: "учитель", active: true },
+    { id: "w5", japanese: "学生", reading: "がくせい", meaning_ru: "студент", active: true }
+  ];
+  const engine = createQuizEngine([], words, () => 0.23);
+  assert.equal(engine.catalog.filter(item => item.form === "ママ").length, 1);
+});
+
+test("normal quiz prioritizes unseen coverage before previously seen sources", () => {
+  const rows = Array.from({ length: 10 }, (_, i) => kanji(String.fromCodePoint(0x4e20 + i), `k${i}`, { kunyomi: "" }));
+  const engine = createQuizEngine(rows, [], () => 0.37);
+  const seenIds = new Set(engine.catalog.slice(0, 5).map(item => item.coverageId));
+  const history = { sources: {}, candidates: {} };
+  for (const id of seenIds) history.sources[id] = { seen: 4, correct: 3, mistakes: 1 };
+  const quiz = engine.generateQuiz(5, null, history);
+  assert.equal(quiz.length, 5);
+  assert.ok(quiz.every(q => !seenIds.has(q.coverageId)));
+  assert.equal(new Set(quiz.map(q => q.coverageId)).size, 5);
+});
+
+test("a quiz avoids repeating a source within the same run while unused sources remain", () => {
+  const rows = Array.from({ length: 8 }, (_, i) => kanji(String.fromCodePoint(0x4e40 + i), `k${i}`, { kunyomi: "" }));
+  const engine = createQuizEngine(rows, [], () => 0.41);
+  const quiz = engine.generateQuiz(8, null, { sources: {}, candidates: {} });
+  assert.equal(quiz.length, 8);
+  assert.equal(new Set(quiz.map(q => q.coverageId)).size, 8);
+});
