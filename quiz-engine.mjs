@@ -19,6 +19,10 @@ const kanaKey = value => [...clean(value)].map(char => {
   return code >= 0x30A1 && code <= 0x30F6 ? String.fromCodePoint(code - 0x60) : char;
 }).join("").toLocaleLowerCase("ru");
 
+function isWordReadingTarget(form, reading) {
+  return Boolean(form && reading) && !/[|/／、，,;；()（）]/u.test(form + reading);
+}
+
 function parseGroupedEntries(value) {
   if (!clean(value)) return [];
   return String(value).split(";").map(entry => entry.trim()).filter(Boolean).map(entry => {
@@ -28,7 +32,8 @@ function parseGroupedEntries(value) {
 }
 
 export function parseReadings(value) {
-  return unique(String(value ?? "").normalize("NFKC").split(/[、，,;；/・\n\r]+/u).map(clean));
+  return unique(String(value ?? "").normalize("NFKC").split(/[、，,;；/・\n\r]+/u).map(clean))
+    .filter(reading => !/^[-—ー－]+$/u.test(reading));
 }
 
 export function getDisplayForm(row, activeKanji) {
@@ -40,27 +45,29 @@ export function getDisplayForm(row, activeKanji) {
   return chars.every(char => activeKanji.has(char)) ? japanese : reading;
 }
 
-function makeReadingVariants(item, vocabulary) {
-  const variants = item.onyomi
-    .filter(reading => reading && key(reading) !== key(item.form))
-    .map(reading => ({ mode: "onyomi", form: item.form, reading }));
+function contextWordsFor(item, vocabulary) {
+  // A reference reading is not a quiz target. Read whole words from the active
+  // vocabulary; never infer a compound's reading by concatenating kanji readings.
+  const preferred = new Map(item.words.map((word, index) => [key(word.form), index]));
+  const matches = vocabulary.filter(word => word.reading && word.meaning
+    && word.displayForm.includes(item.form)
+    && key(word.displayForm) !== kanaKey(word.reading)
+    && isWordReadingTarget(word.displayForm, word.reading));
+  matches.sort((a, b) => (preferred.get(key(a.displayForm)) ?? 1000) - (preferred.get(key(b.displayForm)) ?? 1000)
+    || (Number(a.lesson) || 0) - (Number(b.lesson) || 0)
+    || [...a.displayForm].length - [...b.displayForm].length);
+  const seen = new Set();
+  return matches.filter(word => {
+    const id = `${key(word.displayForm)}|${kanaKey(word.reading)}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
 
-  for (const reading of item.kunyomi) {
-    const matches = vocabulary
-      .filter(word => key(word.reading) === key(reading))
-      .filter(word => key(word.displayForm) !== key(word.reading))
-      .filter(word => word.displayForm.includes(item.form));
-
-    const seenForms = new Set();
-    for (const word of matches) {
-      const formKey = key(word.displayForm);
-      if (seenForms.has(formKey)) continue;
-      seenForms.add(formKey);
-      variants.push({ mode: "kunyomi", form: word.displayForm, reading, vocabularyId: word.id });
-    }
-  }
-
-  return variants;
+function makeReadingVariants(words) {
+  return words.map(word => ({ mode: "word", form: word.displayForm,
+    reading: word.reading, meaning: word.meaning, vocabularyId: word.id }));
 }
 
 export function normalizeQuizData(kanjiRows = [], vocabularyRows = []) {
@@ -89,10 +96,10 @@ export function normalizeQuizData(kanjiRows = [], vocabularyRows = []) {
     exampleRu: clean(row.example_ru)
   })).filter(row => row.id && row.displayForm);
 
-  const kanji = kanjiBase.map(item => ({
-    ...item,
-    readingVariants: makeReadingVariants(item, vocabulary)
-  }));
+  const kanji = kanjiBase.map(item => {
+    const knownWords = contextWordsFor(item, vocabulary);
+    return { ...item, knownWords, readingVariants: makeReadingVariants(knownWords) };
+  });
 
   return { kanji, vocabulary };
 }
@@ -127,18 +134,16 @@ function spec(candidate) {
   if (type.endsWith("_from_meaning") && form && item.meaning) {
     return { prompt: item.meaning, answer: form, domain: "form" };
   }
-  if (type.endsWith("_from_reading") && form && reading && key(form) !== key(reading)) {
-    const label = type.startsWith("kanji_onyomi_") ? "Выберите кандзи по онъёми"
-      : type.startsWith("kanji_kunyomi_") ? "Выберите слово"
+  if (type.endsWith("_from_reading") && isWordReadingTarget(form, reading) && key(form) !== key(reading)) {
+    const label = type.startsWith("kanji_word_") ? `Выберите слово с ${item.form}`
         : undefined;
     return { prompt: reading, answer: form, domain: "form", label };
   }
   if (type.endsWith("_meaning") && form && item.meaning) {
     return { prompt: form, answer: item.meaning, domain: "meaning" };
   }
-  if (type.endsWith("_reading") && form && reading && key(form) !== key(reading)) {
-    const label = type.startsWith("kanji_onyomi_") ? "Онъёми"
-      : type.startsWith("kanji_kunyomi_") ? "Как читается слово?"
+  if (type.endsWith("_reading") && isWordReadingTarget(form, reading) && key(form) !== key(reading)) {
+    const label = type.startsWith("kanji_word_") ? `Как читается слово с ${item.form}?`
         : undefined;
     return { prompt: form, answer: reading, domain: "reading", label };
   }
@@ -153,7 +158,7 @@ function buildCandidates(data) {
       candidates.push({ item, type, variant: null });
     }
     for (const variant of item.readingVariants) {
-      const stem = variant.mode === "onyomi" ? "kanji_onyomi" : "kanji_kunyomi";
+      const stem = "kanji_word";
       candidates.push({ item, type: `${stem}_reading`, variant });
       candidates.push({ item, type: `${stem}_from_reading`, variant });
     }
@@ -171,7 +176,8 @@ function buildCandidates(data) {
 
 function compatible(sourceCandidate, peerCandidate, sourceQuestion) {
   const candidate = spec(peerCandidate);
-  if (!candidate || key(candidate.answer) === key(sourceQuestion.answer)) return false;
+  const answerKey = sourceQuestion.domain === "reading" ? kanaKey : key;
+  if (!candidate || answerKey(candidate.answer) === answerKey(sourceQuestion.answer)) return false;
   if (sourceCandidate.type.endsWith("_meaning") || sourceCandidate.type.endsWith("_from_meaning")) {
     if (overlaps(definitions(sourceCandidate.item), definitions(peerCandidate.item))) return false;
   }
@@ -179,8 +185,10 @@ function compatible(sourceCandidate, peerCandidate, sourceQuestion) {
 }
 
 function validateQuestion(question, choices) {
-  if (!question || choices.length !== 4 || new Set(choices.map(key)).size !== 4) return false;
-  if (choices.filter(choice => key(choice) === key(question.answer)).length !== 1) return false;
+  if (!question) return false;
+  const answerKey = question.domain === "reading" ? kanaKey : key;
+  if (choices.length !== 4 || new Set(choices.map(answerKey)).size !== 4) return false;
+  if (choices.filter(choice => answerKey(choice) === answerKey(question.answer)).length !== 1) return false;
   return true;
 }
 
@@ -189,7 +197,7 @@ function feedbackFor(candidate, data) {
   if (item.kind === "kanji") {
     const focusWord = candidate.variant?.vocabularyId
       ? data.vocabulary.find(word => word.id === candidate.variant.vocabularyId)
-      : null;
+      : item.knownWords[0] || null;
     return {
       kind: "kanji",
       kanji: item.form,
@@ -205,8 +213,9 @@ function feedbackFor(candidate, data) {
         exampleReading: focusWord.exampleReading,
         exampleRu: focusWord.exampleRu
       } : null,
-      words: item.words.slice(0, 3),
-      examples: item.examples.slice(0, 1)
+      words: item.knownWords.slice(0, 2).map(word => ({ form: word.displayForm,
+        reading: word.reading, meaning: word.meaning })),
+      examples: []
     };
   }
 
@@ -236,11 +245,14 @@ export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random
     const question = spec(candidate);
     if (!question) return null;
     const peersOfType = byType.get(candidate.type) || [];
+    const promptKey = candidate.type.endsWith("_from_reading") ? kanaKey : key;
+    const answerKey = question.domain === "reading" ? kanaKey : key;
 
     // If the same visible prompt has more than one valid answer, the question is ambiguous.
     if (peersOfType.some(peer => peer !== candidate && (() => {
       const peerQuestion = spec(peer);
-      return peerQuestion && key(peerQuestion.prompt) === key(question.prompt) && key(peerQuestion.answer) !== key(question.answer);
+      return peerQuestion && promptKey(peerQuestion.prompt) === promptKey(question.prompt)
+        && answerKey(peerQuestion.answer) !== answerKey(question.answer);
     })())) return null;
 
     // Meanings such as synonyms/near-duplicates can also make reverse questions ambiguous.
@@ -248,13 +260,13 @@ export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random
       overlaps(definitions(candidate.item), definitions(peer.item)))) return null;
 
     const peers = peersOfType.filter(peer => peer !== candidate && compatible(candidate, peer, question));
-    const seen = new Set([key(question.answer)]);
+    const seen = new Set([answerKey(question.answer)]);
     const distractors = [];
     for (const peer of shuffle(peers, random)) {
       const peerQuestion = spec(peer);
       const value = peerQuestion?.answer;
-      if (!value || seen.has(key(value))) continue;
-      seen.add(key(value));
+      if (!value || seen.has(answerKey(value))) continue;
+      seen.add(answerKey(value));
       distractors.push(value);
       if (distractors.length === 3) break;
     }
@@ -282,7 +294,8 @@ export function createQuizEngine(kanjiRows, vocabularyRows, random = Math.random
       choices,
       correctIndex,
       answer: question.answer,
-      source: { form: sourceForm, reading: sourceReading, meaning: candidate.item.meaning },
+      source: { form: sourceForm, reading: sourceReading,
+        meaning: candidate.variant?.meaning || candidate.item.meaning },
       feedback: feedbackFor(candidate, data)
     };
   }

@@ -12,9 +12,9 @@ import {
   getDailyNewIds,
   readQuizProgress,
   recordQuizAnswer
-} from "./storage.js?v=20";
-import { scheduleReview, isDue, isDifficult, buildReviewQueue, RESULTS } from "./scheduler.js?v=20";
-import { createQuizEngine } from "./quiz-engine.mjs?v=20";
+} from "./storage.js?v=21";
+import { scheduleReview, isDue, isDifficult, buildReviewQueue, RESULTS } from "./scheduler.js?v=21";
+import { createQuizEngine } from "./quiz-engine.mjs?v=21";
 
 const state = {
   kanji: [],
@@ -153,6 +153,8 @@ function parseGroupedEntries(value) {
 function normalizeUnique(items, normalizer) {
   const seen = new Set();
   return (Array.isArray(items) ? items : []).reduce((list, source) => {
+    if (source && Object.prototype.hasOwnProperty.call(source, "active")
+      && !["true", "1", "yes", "да"].includes(String(source.active).trim().toLowerCase())) return list;
     const item = normalizer(source);
     if (!item || seen.has(item.storageId)) return list;
     seen.add(item.storageId);
@@ -770,7 +772,7 @@ function uniqueFeedbackExamples(feedback) {
   };
   if (feedback?.focusWord) add(feedback.focusWord);
   (feedback?.words || []).forEach(add);
-  return result.slice(0, 3);
+  return result.slice(0, 2);
 }
 
 function renderQuizFeedback(question, correct) {
@@ -792,11 +794,12 @@ function renderQuizFeedback(question, correct) {
     overview.append(title);
 
     const readings = el("div", "quiz-reading-grid");
-    addQuizFact(readings, "Онъёми", (info.onyomi || []).join("・") || "—");
-    addQuizFact(readings, "Кунъёми", (info.kunyomi || []).join("・") || "—");
+    addQuizFact(readings, "Онъёми · справка", (info.onyomi || []).join("・") || "—");
+    addQuizFact(readings, "Кунъёми · справка", (info.kunyomi || []).join("・") || "—");
     overview.append(readings);
 
     const examples = uniqueFeedbackExamples(info);
+    if (!examples.length) overview.append(el("p", "quiz-learning-caption", "Чтение закрепим, когда изучим слово с этим кандзи."));
     if (examples.length) {
       overview.append(el("div", "quiz-learning-caption", "Примеры"));
       const list = el("div", "quiz-feedback-examples");
@@ -1066,7 +1069,8 @@ function createAudioButton(text, label, className = "audio-button") {
   button.setAttribute("aria-label", label);
   button.title = label;
   button.textContent = "🔊";
-  button.disabled = !has(text);
+  button.disabled = !/\.mp3(?:$|[?#])/i.test(clean(text));
+  if (button.disabled) button.title = "Озвучка пока не готова";
   button.addEventListener("click", event => {
     event.preventDefault();
     event.stopPropagation();
@@ -1195,7 +1199,7 @@ document.addEventListener("keydown", event => {
 
 window.addEventListener("online", () => setBanner(state.usingCache ? "Соединение восстановлено. Нажмите «Обновить», чтобы получить свежие данные." : ""));
 window.addEventListener("offline", () => setBanner("Нет сети. Доступна сохранённая версия приложения и ранее загруженные данные."));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=17").catch(error => console.warn("Service Worker не зарегистрирован", error)));
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=21").catch(error => console.warn("Service Worker не зарегистрирован", error)));
 
 updateDeckSwitch();
 loadCards();

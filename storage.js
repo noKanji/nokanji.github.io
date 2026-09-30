@@ -1,4 +1,4 @@
-import { defaultProgress } from "./scheduler.js?v=20";
+import { defaultProgress } from "./scheduler.js?v=21";
 
 const PROGRESS_KEY = "kanji-trainer-progress-v1";
 const DATA_CACHE_KEY = "kanji-words-data-cache-v2";

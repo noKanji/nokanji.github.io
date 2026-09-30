@@ -18,7 +18,7 @@ test("getDisplayForm follows active kanji and manual override", () => {
 
 test("only active rows can enter the source and distractor pools", () => {
   const rows = Array.from({ length: 8 }, (_, i) => kanji(String.fromCodePoint(0x4e00 + i), `k${i}`));
-  const words = Array.from({ length: 8 }, (_, i) => word(`w${i}`, { japanese: `ことば${i}`, reading: `ことば${i}` }));
+  const words = Array.from({ length: 8 }, (_, i) => word(`w${i}`, { japanese: `${String.fromCodePoint(0x4e00 + i)}つ`, reading: `よみ${i}` }));
   rows[7].active = false;
   words[7].active = false;
   const engine = createQuizEngine(rows, words, () => 0.37);
@@ -39,7 +39,7 @@ test("only active rows can enter the source and distractor pools", () => {
     assert.notEqual(q.sourceId, "w7");
     assert.ok(!q.choices.some(c => c.includes("k7") || c.includes("w7")));
     if (q.type.endsWith("_from_meaning") || q.type.endsWith("_from_reading")) {
-      const forms = q.kind === "kanji" ? activeForms : activeWordForms;
+      const forms = q.type.startsWith("kanji_word") ? activeWordForms : q.kind === "kanji" ? activeForms : activeWordForms;
       assert.ok(q.choices.every(choice => forms.has(choice)));
       assert.equal(q.answer, q.source.form);
     } else if (q.type.endsWith("_meaning")) {
@@ -48,7 +48,7 @@ test("only active rows can enter the source and distractor pools", () => {
       assert.ok(q.source.reading.split(" / ").includes(q.answer));
     }
   }
-  assert.equal(new Set(quiz.map(q => `${q.kind}:${q.sourceId}:${q.type}`)).size, 30);
+  assert.equal(new Set(quiz.map(q => q.candidateId)).size, 30);
   const mistakes = [quiz[1], quiz[3], quiz[5]];
   const retry = engine.generateMistakeQuiz(mistakes);
   assert.equal(retry.length, 3);
@@ -124,12 +124,13 @@ test("lexical kunyomi uses the real word form with okurigana", () => {
 
   const engine = createQuizEngine(rows, words, () => 0.31);
   const five = engine.data.kanji.find(row => row.id === "五");
-  assert.ok(five.readingVariants.some(v => v.mode === "kunyomi" && v.form === "五つ" && v.reading === "いつつ"));
-  assert.ok(!five.readingVariants.some(v => v.mode === "kunyomi" && v.form === "五" && v.reading === "いつつ"));
+  assert.ok(five.readingVariants.some(v => v.form === "五つ" && v.reading === "いつつ"));
+  assert.ok(!five.readingVariants.some(v => v.form === "五"));
 
   const quiz = engine.generateQuiz(100);
-  assert.ok(quiz.some(q => q.sourceId === "五" && q.type === "kanji_kunyomi_reading" && q.prompt === "五つ" && q.answer === "いつつ"));
-  assert.ok(quiz.some(q => q.sourceId === "五" && q.type === "kanji_onyomi_reading" && q.prompt === "五" && q.answer === "ゴ" && q.label === "Онъёми"));
+  assert.ok(quiz.some(q => q.sourceId === "五" && q.type === "kanji_word_reading" && q.prompt === "五つ" && q.answer === "いつつ"));
+  assert.deepEqual(five.onyomi, ["ゴ"]);
+  assert.ok(!quiz.some(q => q.type.startsWith("kanji_onyomi")));
   assert.ok(!quiz.some(q => q.prompt === "五" && q.answer === "いつつ"));
 });
 
@@ -138,7 +139,7 @@ test("kunyomi without a matching active vocabulary form is not asked on bare kan
     { id: "五", kanji: "五", meaning: "пять", onyomi: "ゴ", kunyomi: "いつつ", active: true }
   ];
   const data = normalizeQuizData(rows, []);
-  assert.deepEqual(data.kanji[0].readingVariants, [{ mode: "onyomi", form: "五", reading: "ゴ" }]);
+  assert.deepEqual(data.kanji[0].readingVariants, []);
 });
 
 test("quiz feedback includes both kanji readings and source-table examples", () => {
@@ -173,7 +174,7 @@ test("quiz feedback includes both kanji readings and source-table examples", () 
   }));
 
   const quiz = createQuizEngine(rows, words, () => 0.29).generateQuiz(100);
-  const q = quiz.find(item => item.sourceId === "町" && item.type === "kanji_kunyomi_reading");
+  const q = quiz.find(item => item.sourceId === "町" && item.type === "kanji_word_reading");
   assert.ok(q);
   assert.deepEqual(q.feedback.onyomi, ["チョウ"]);
   assert.deepEqual(q.feedback.kunyomi, ["まち"]);
@@ -181,7 +182,8 @@ test("quiz feedback includes both kanji readings and source-table examples", () 
   assert.equal(q.feedback.focusWord.reading, "まち");
   assert.equal(q.feedback.focusWord.exampleJp, "町に住んでいます。");
   assert.equal(q.feedback.words[0].form, "町");
-  assert.equal(q.feedback.examples[0].meaning, "В этом городе есть больница.");
+  assert.equal(q.feedback.words[0].meaning, "город; посёлок");
+  assert.deepEqual(q.feedback.examples, []);
 });
 
 test("vocabulary feedback includes reading, meaning, and sentence", () => {
