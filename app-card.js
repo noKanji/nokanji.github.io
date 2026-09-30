@@ -12,9 +12,10 @@ import {
   getDailyNewIds,
   readQuizProgress,
   recordQuizAnswer
-} from "./storage.js?v=21";
-import { scheduleReview, isDue, isDifficult, buildReviewQueue, RESULTS } from "./scheduler.js?v=21";
-import { createQuizEngine } from "./quiz-engine.mjs?v=21";
+} from "./storage.js?v=22";
+import { scheduleReview, isDue, isDifficult, buildReviewQueue, RESULTS } from "./scheduler.js?v=22";
+import { createQuizEngine } from "./quiz-engine.mjs?v=22";
+import { createDataSync } from "./data-sync.mjs?v=22";
 
 const state = {
   kanji: [],
@@ -180,40 +181,54 @@ function apiUrl(type = "all", force = false) {
   return url.href;
 }
 
-async function loadCards(force = false) {
-  showView("loading");
-  const configured = CONFIG.API_URL && CONFIG.API_URL !== "PASTE_GOOGLE_APPS_SCRIPT_URL_HERE";
-  try {
-    if (!configured) throw new Error("Укажите URL Google Apps Script в config-live.js.");
-    const response = await fetch(apiUrl("all", force), {
-      cache: force ? "reload" : "no-cache",
-      redirect: "follow"
-    });
-    if (!response.ok) throw new Error(`API вернул код ${response.status}.`);
-    const payload = await response.json();
-    if (!payload?.success) throw new Error(payload?.error || "API вернул ошибку.");
-    applyPayload(payload);
-    cacheLearningData(payload);
-    state.usingCache = false;
-    setBanner("");
-  } catch (error) {
-    const cached = readCachedLearningData();
-    if (cached) {
-      applyPayload(cached.payload);
-      state.usingCache = true;
-      setBanner(`Источник временно недоступен. Показана сохранённая версия от ${formatDate(cached.savedAt)}.`);
-      console.warn(error);
-    } else {
-      state.kanji = [];
-      state.words = [];
-      state.quizEngine = null;
-      state.quiz = null;
-      setBanner(error.message, true);
+function studyInProgress() {
+  return Boolean((state.quiz && state.quiz.index < state.quiz.questions.length)
+    || (state.session && state.session.index < state.session.queue.length));
+}
+
+const dataSync = createDataSync({
+  readCache: readCachedLearningData,
+  saveCache: cacheLearningData,
+  online: () => navigator.onLine !== false,
+  isBusy: studyInProgress,
+  request: async force => {
+    if (!CONFIG.API_URL || CONFIG.API_URL === "PASTE_GOOGLE_APPS_SCRIPT_URL_HERE") {
+      throw new Error("Укажите URL источника в config-live.js.");
     }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(apiUrl("all", force), {
+        cache: force ? "reload" : "no-cache", redirect: "follow", signal: controller.signal
+      });
+      if (!response.ok) throw new Error(`Источник вернул код ${response.status}.`);
+      return await response.json();
+    } finally { clearTimeout(timeout); }
+  },
+  apply: payload => {
+    // Keep completed results available after replacing the underlying catalog.
+    const completedQuiz = state.quiz;
+    applyPayload(payload);
+    state.quiz = completedQuiz;
+    updateDeckSwitch();
+    populateFilters();
+    routeTo(state.route || "today", false);
+    if (state.route === "session") renderSession();
+  },
+  status: (status, detail) => {
+    state.usingCache = ["cached", "refreshing", "offline", "pending"].includes(status);
+    $("refresh-button").disabled = status === "loading" || status === "refreshing";
+    if (status === "loading") { showView("loading"); setBanner(""); }
+    else if (status === "refreshing") setBanner("Проверяем обновления в фоне. Можно продолжать заниматься.");
+    else if (status === "pending") setBanner("Новая база загружена. Применим её после завершения занятия.");
+    else if (status === "offline") setBanner("Не удалось обновить базу. Можно заниматься по сохранённым данным.");
+    else if (status === "error") { setBanner(detail?.message || "Не удалось загрузить базу.", true); routeTo("today", false); }
+    else setBanner("");
   }
-  updateDeckSwitch();
-  populateFilters();
-  routeTo(state.route || "today", false);
+});
+
+function loadCards(force = false) {
+  return force ? dataSync.refresh(true) : dataSync.start();
 }
 
 function applyPayload(payload) {
@@ -730,6 +745,7 @@ function rateCard(card, result) {
 }
 
 function renderCompletion() {
+  if (dataSync.applyPending()) return;
   const session = state.session;
   $("session-progress").textContent = "";
   const box = el("div", "completion");
@@ -746,6 +762,7 @@ function renderCompletion() {
 }
 
 function startQuiz(mistakes = null) {
+  dataSync.applyPending();
   const questions = state.quizEngine
     ? mistakes ? state.quizEngine.generateMistakeQuiz(mistakes) : state.quizEngine.generateQuiz(30, null, readQuizProgress())
     : [];
@@ -916,6 +933,7 @@ function answerQuiz(index) {
 }
 
 function renderQuizResult() {
+  if (dataSync.applyPending()) return;
   const quiz = state.quiz;
   const total = quiz.questions.length;
   const box = el("div", "completion quiz-result");
@@ -1145,10 +1163,10 @@ document.querySelectorAll(".bottom-nav button").forEach(button => button.addEven
   else routeTo(button.dataset.route);
 }));
 ["search-input", "lesson-filter", "status-filter"].forEach(id => $(id).addEventListener(id === "search-input" ? "input" : "change", renderLibrary));
-$("quiz-exit").addEventListener("click", () => { state.quiz = null; routeTo("today"); });
+$("quiz-exit").addEventListener("click", () => { state.quiz = null; dataSync.applyPending(); routeTo("today"); });
 $("refresh-button").addEventListener("click", () => loadCards(true));
 $("start-today").addEventListener("click", startTodaySession);
-$("session-exit").addEventListener("click", () => { state.session = null; routeTo("today"); });
+$("session-exit").addEventListener("click", () => { state.session = null; dataSync.applyPending(); routeTo("today"); });
 $("quiz-progress-start").addEventListener("click", () => startQuiz());
 $("dialog-close").addEventListener("click", () => closeDialog($("card-dialog")));
 $("settings-button").addEventListener("click", () => { syncSettingsDialog(); openDialog($("settings-dialog")); });
@@ -1199,7 +1217,7 @@ document.addEventListener("keydown", event => {
 
 window.addEventListener("online", () => setBanner(state.usingCache ? "Соединение восстановлено. Нажмите «Обновить», чтобы получить свежие данные." : ""));
 window.addEventListener("offline", () => setBanner("Нет сети. Доступна сохранённая версия приложения и ранее загруженные данные."));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=21").catch(error => console.warn("Service Worker не зарегистрирован", error)));
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=22").catch(error => console.warn("Service Worker не зарегистрирован", error)));
 
 updateDeckSwitch();
 loadCards();
