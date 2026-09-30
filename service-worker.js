@@ -4,7 +4,7 @@ importScripts("./config-live.js?v=22");
 const SHELL_CACHE = `${CONFIG.CACHE_VERSION}-shell`;
 const IMAGE_CACHE = `${CONFIG.CACHE_VERSION}-images`;
 const SHELL = [
-  "./", "./index.html", "./manifest.json", "./styles.css?v=22",
+  "./", "./index.html", "./manifest.json", "./styles.css?v=23",
   "./config-live.js?v=22", "./app-card.js?v=22", "./storage.js?v=22", "./scheduler.js?v=22", "./quiz-engine.mjs?v=22", "./data-sync.mjs?v=22",
   "./icons/icon-48.png", "./icons/icon-72.png", "./icons/icon-96.png", "./icons/icon-128.png",
   "./icons/icon-144.png", "./icons/icon-152.png", "./icons/icon-180.png", "./icons/icon-192.png",
